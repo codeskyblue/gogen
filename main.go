@@ -1,28 +1,21 @@
-// testmartini project main.go
 package main
 
 import (
-	"fmt"
+	"github.com/astaxie/beego"
+	"github.com/shxsun/gails/controllers"
+)
 
-	"github.com/codegangsta/martini"
+var (
+	urlbase = "/api"
 )
 
 func main() {
-	fmt.Println("Hello World!")
-	m := martini.Classic()
+	beego.AutoRender = false
+	beego.DirectoryIndex = true
 
-	m.Get("/:name", func(params martini.Params) string {
-		return "Hello " + params["name"]
-	})
+	beego.Router("/api/template/new", &controllers.UserController{}, "post:Save")
+	beego.Router("/api/template/all", &controllers.UserController{}, "get:All")
+	beego.Router("/api/template/:id(\\d+)", &controllers.UserController{}) // GET + PUT  + DELETE
 
-	m.Get("/", func() string {
-		return "this is index.html"
-	})
-
-	m.Get("/posts/:id", func(params martini.Params) string {
-		id := params["id"]
-		return id
-	})
-
-	m.Run()
+	beego.Run()
 }
