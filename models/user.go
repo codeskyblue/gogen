@@ -2,46 +2,17 @@ package models
 
 import (
 	"fmt"
-	"log"
 
-	"github.com/astaxie/beego"
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/lunny/xorm"
-)
-
-var (
-	x *xorm.Engine
 )
 
 func init() {
-	var err error
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	dataSource := beego.AppConfig.String("mysql")
-	if dataSource == "" {
-		dataSource = "root:@/trs"
-	}
-	x, err = xorm.NewEngine("mysql", dataSource)
-	if err != nil {
-		log.Fatal(err)
-	}
+	tables = append(tables, new(User))
 }
 
 type User struct {
 	ID   int64  `json:"id" xorm:"id pk autoincr"`
 	Name string `json:"name"`
-}
-
-func InitDB() (err error) {
-	if err = x.Sync(new(User)); err != nil {
-		return
-	}
-	return
-}
-
-func init() {
-	if err := InitDB(); err != nil {
-		log.Fatal(err)
-	}
 }
 
 // create
