@@ -19,7 +19,7 @@ exit 1
 fi
 
 mkdir -p "$1"; cd "$1"
-git clone https://github.com/shxsun/gls $TMPDIR
+git clone https://github.com/shxsun/gails-default $TMPDIR
 
 # $PROGRAM [shxsun/gails] book name:string
 table=$2
