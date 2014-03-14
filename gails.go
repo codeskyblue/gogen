@@ -1,18 +1,17 @@
 package main
 
 import (
-	"bytes"
-	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"text/template"
 
 	"github.com/shxsun/flags"
+	"github.com/shxsun/go-sh"
 )
 
 type Option struct {
@@ -41,16 +40,51 @@ type Column struct {
 	ORMName string
 }
 
-func main() {
-	if len(os.Args) != 1 {
-		shPath := filepath.Join(filepath.Dir(os.Args[0]), "clone.sh")
-		err := syscall.Exec(shPath, os.Args, os.Environ())
-		log.Fatal(err)
+func ignore(info os.FileInfo) bool {
+	if info.IsDir() {
+		if info.Name() != "." && info.Name() != ".." &&
+			strings.HasPrefix(info.Name(), ".") { // ignore hidden dir
+			return true
+		}
+	} else {
+		return strings.HasPrefix(info.Name(), ".")
 	}
-	args, err := flags.Parse(mycnf)
+	return false
+}
+
+func pathWalk(path string, depth int) (files []string, err error) {
+	files = make([]string, 0)
+	baseNumSeps := strings.Count(path, string(os.PathSeparator))
+	err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+		if info.IsDir() {
+			pathDepth := strings.Count(path, string(os.PathSeparator)) - baseNumSeps
+			if pathDepth > depth {
+				return filepath.SkipDir
+			}
+			if ignore(info) {
+				return filepath.SkipDir
+			}
+		} else if info.Mode().IsRegular() && !ignore(info) {
+			files = append(files, path)
+			//if matched, _ := regexp.Match(mycnf.Include, []byte(info.Name())); matched { //}
+		}
+		return nil
+	})
+	return
+}
+
+var args []string
+
+func init() {
+	var err error
+	args, err = flags.Parse(mycnf)
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+func main() {
+	// prepare arguments
 	patten := regexp.MustCompile(`^(\w+):(string|int)$`)
 	vs := make(map[string]interface{}, 0)
 	cols := make([]Column, 0)
@@ -68,14 +102,48 @@ func main() {
 	vs["PWD"], _ = os.Getwd()
 
 	// render template
-	funcMap := template.FuncMap{
-		"title": strings.Title,
-	}
-	buf := bytes.NewBuffer(nil)
-	io.Copy(buf, os.Stdin)
-	t, err := template.New("test").Funcs(funcMap).Parse(string(buf.Bytes()))
+	tmpdir, err := ioutil.TempDir("./", "tmp.gails.")
 	if err != nil {
 		log.Fatal(err)
 	}
-	t.Execute(os.Stdout, cols)
+	defer os.RemoveAll(tmpdir)
+	log.Println("use template", mycnf.Template)
+	sh.Command("git", "clone", "https://github/"+mycnf.Template, tmpdir).Run()
+
+	files, err := pathWalk("./", 1)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// format code
+	session := sh.NewSession()
+	session.ShowCMD = true
+	for _, file := range files {
+		if strings.HasSuffix(file, ".go") {
+			session.Command("go", "fmt", file).Run()
+		}
+	}
+}
+
+func render(src, dst string, v interface{}) {
+	funcMap := template.FuncMap{
+		"title": strings.Title,
+	}
+	t, err := template.New("test").Funcs(funcMap).ParseFiles(src)
+	if err != nil {
+		log.Fatal(err)
+	}
+	t.Execute(os.Stdout, v)
+}
+
+func deleteXXXX(filename string) (err error) {
+	xxxx := regexp.MustCompile(`.*\s+XXXX.*\n`)
+	content, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return
+	}
+	fi, _ := os.Stat(filename)
+	out := xxxx.ReplaceAll(content, []byte(""))
+	err = ioutil.WriteFile(filename, out, fi.Mode())
+	return
 }
