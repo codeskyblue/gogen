@@ -18,3 +18,5 @@ cd into gopath dir, to create the first app
 start you app
 
 	cd myapi; bee run
+
+## only work well on linux
