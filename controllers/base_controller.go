@@ -40,6 +40,9 @@ func (this *APIController) teminate() {
 	if this.err != nil {
 		r.Error = this.err.Error()
 	}
+	if this.err == nil && this.data == nil {
+		this.data = "success"
+	}
 	r.Data = this.data
 	this.Data["json"] = r
 	this.ServeJson()

@@ -58,6 +58,15 @@ func (v *User) Update(id int64) error {
 	return err
 }
 
+func GetUser(id int64) (v *User, err error) {
+	v = new(User)
+	ok, err := x.Id(id).Get(v)
+	if err == nil && !ok {
+		err = fmt.Errorf("get user(id:%d) failed", id)
+	}
+	return
+}
+
 func (v *User) Save() error {
 	if v.ID == 0 {
 		return v.Create()

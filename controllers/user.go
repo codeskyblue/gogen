@@ -14,12 +14,23 @@ func (this *UserController) Save() {
 	this.err = v.Save()
 }
 
-// PUT /api/user/:id
-func (this *UserController) Put() {
+// POST /api/user/:id
+func (this *UserController) Post() {
 	v := new(models.User)
 	v.ID, _ = this.GetInt(":id")
 	v.Name = this.MustString("name")
 	this.err = v.Save()
+}
+
+// GET /api/user/:id
+func (this *UserController) Get() {
+	id := this.MustInt64(":id")
+	v, err := models.GetUser(id)
+	if err != nil {
+		this.err = err
+		return
+	}
+	this.data = v
 }
 
 // GET /api/user/all
