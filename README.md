@@ -21,7 +21,7 @@ beego + xorm skeleton, for quickly REST-API develop.
 	curl localhost:8080/api/book/all
 
 ## only work well on linux, mac
-	Even through I test on my machine for many times, but it is better to backup your code, before you use it.
+Even through I test on my machine for many times, but it is better to backup your code, before you use it.
 
 ## how to make a template
 default template address is in <https://github.com/shxsun/gails-default>
