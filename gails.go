@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -19,27 +20,27 @@ import (
 
 type Option struct {
 	Template string `short:"t" long:"template" default:"shxsun/gails-default" description:"use which template(templale should on github)"`
+	Path     string `short:"p" long:"path" default:"." description:"code generate path"`
 }
 
 var (
 	mycnf   = &Option{}
 	args    []string
 	funcMap template.FuncMap
+	gyml    *GailsYaml
 )
 
-// ORMName, Type, Name
 /*
-var tmpl = `
-		/* XXXX
-		{{ range . }}v.{{.Name}} = this.Get{{.Type|title}}("{{.ORMName}}")
-		{{ end }}
+// ORMName, Type, Name
+{{ range . }}v.{{.Name}} = this.Get{{.Type|title}}("{{.ORMName}}")
+{{ end }}
 
-		type Book struct {
-			ID int64 json
-			{{ range . }}{{.Name}}  {{.Type}} xorm:"{{.ORMName}}"
-			{{ end }}
-		}
-		XXXX */
+type Book struct {
+	ID int64 json
+	{{ range . }}{{.Name}}  {{.Type}} xorm:"{{.ORMName}}"
+	{{ end }}
+}
+*/
 
 type Column struct {
 	Name    string
@@ -115,10 +116,11 @@ func main() {
 		cols = append(cols, c)
 	}
 	vs["Cols"] = cols
-	pwd, _ := os.Getwd()
-	vs["PWD"] = pwd
-	vs["PkgPath"] = pwd[len(os.Getenv("GOPATH")+"/src/"):]
-	vs["AppName"] = filepath.Base(pwd)
+	cwd, _ := os.Getwd()
+	tgtwd := filepath.Clean(filepath.Join(cwd, mycnf.Path))
+	vs["PWD"] = filepath.Clean(filepath.Join(tgtwd, mycnf.Path))
+	vs["PkgPath"] = tgtwd[len(os.Getenv("GOPATH")+"/src/"):]
+	vs["AppName"] = filepath.Base(tgtwd)
 
 	// render template
 	tmpdir, err := ioutil.TempDir("./", "tmp.gails.")
@@ -127,8 +129,8 @@ func main() {
 	}
 	defer os.RemoveAll(tmpdir)
 	log.Println("use template", mycnf.Template)
-	//sh.Command("git", "clone", "https://github.com/"+mycnf.Template, tmpdir).Run()
-	sh.Command("git", "clone", "/Users/skyblue/goproj/src/github.com/shxsun/gails-default", tmpdir).Run()
+	sh.Command("git", "clone", "https://github.com/"+mycnf.Template, tmpdir).Run()
+	//sh.Command("git", "clone", "/Users/skyblue/goproj/src/github.com/shxsun/gails-default", tmpdir).Run()
 
 	files, err := pathWalk(tmpdir, 1)
 	if err != nil {
@@ -137,24 +139,21 @@ func main() {
 
 	// newName func, eg: user.go -- rename -> book.go
 	pjoin := func(p string) string { return filepath.Join(tmpdir, p) }
-	filemap := readGailsYml(pjoin(".gails.yml"))
+	gyml = readGailsYml(pjoin(".gails.yml"))
 	newName := func(file string) string {
-		t, ok := filemap[file]
+		t, ok := gyml.FileRename[file]
 		if !ok {
-			return file
+			return filepath.Join(mycnf.Path, file)
 		}
 		s, err := renderString(t, vs)
 		if err != nil {
 			log.Fatal(err)
 		}
-		return s
+		return filepath.Join(mycnf.Path, s)
 	}
 
 	// format code
-	session := sh.NewSession()
-	session.ShowCMD = true
 	for _, src := range files {
-		//fmt.Println(file)
 		orig := src[len(tmpdir)+1:]
 		dst := newName(orig)
 		if _, exists := fileExists(dst); !exists {
@@ -162,14 +161,16 @@ func main() {
 			os.MkdirAll(dstDir, 0755)
 			fmt.Println("git://"+orig, "-->", dst)
 			if err = renderFile(dst, src, vs); err != nil {
+				log.Println(err)
 				sh.Command("cp", "-v", src, dst).Run()
 			}
 			// format code
 			if strings.HasSuffix(dst, ".go") {
-				session.Command("go", "fmt", dst).Run()
+				exec.Command("go", "fmt", dst).Run()
 			}
 		}
 	}
+	fmt.Println("---------- template notice -------------\n" + gyml.Notice)
 }
 
 func init() {
@@ -182,19 +183,27 @@ func fileExists(file string) (os.FileInfo, bool) {
 	fi, err := os.Stat(file)
 	return fi, err == nil
 }
-func readGailsYml(file string) (m map[string]string) {
-	m = make(map[string]string)
+
+type GailsYaml struct {
+	FileRename   map[string]string `yaml:"file-rename"`
+	StringRename map[string]string `yaml:"string-rename"`
+	Notice       string            `yaml:"notice"`
+}
+
+func readGailsYml(file string) (gyml *GailsYaml) {
 	var err error
 	defer func() {
 		if err != nil {
-			m[".gitignore"] = ".gitignore"
+			gyml.FileRename = make(map[string]string)
+			gyml.StringRename = make(map[string]string)
 		}
 	}()
 	data, err := ioutil.ReadFile(file)
 	if err != nil {
 		return
 	}
-	err = goyaml.Unmarshal(data, m)
+	gyml = new(GailsYaml)
+	err = goyaml.Unmarshal(data, gyml)
 	return
 }
 
@@ -210,7 +219,6 @@ func renderString(tmplstr string, v interface{}) (out string, err error) {
 }
 
 func renderFile(dst string, src string, v interface{}) (err error) {
-	fmt.Println(src)
 	xxxx := regexp.MustCompile(`[^\n]*XXXX[^\n]*\n`)
 	nnnn := regexp.MustCompile(`.*NNNN`)
 	s, err := ioutil.ReadFile(src)
@@ -227,9 +235,19 @@ func renderFile(dst string, src string, v interface{}) (err error) {
 	buf := bytes.NewBuffer(nil)
 	err = t.Execute(buf, v)
 	if err != nil {
+		log.Println(err)
 		return
 	}
+	out = buf.Bytes()
+	for key, val := range gyml.StringRename {
+		nkey, err := renderString(val, v)
+		if err != nil {
+			log.Fatal(err)
+		}
+		out = bytes.Replace(out, []byte(key), []byte(nkey), -1)
+	}
+
 	fi, _ := os.Stat(src)
-	err = ioutil.WriteFile(dst, buf.Bytes(), fi.Mode())
+	err = ioutil.WriteFile(dst, out, fi.Mode())
 	return
 }
