@@ -162,12 +162,11 @@ func main() {
 			os.MkdirAll(dstDir, 0755)
 			fmt.Println("git://"+orig, "-->", dst)
 			if err = renderFile(dst, src, vs); err != nil {
-				fmt.Println(err)
 				sh.Command("cp", "-v", src, dst).Run()
 			}
 			// format code
 			if strings.HasSuffix(dst, ".go") {
-				//session.Command("go", "fmt", file).Run()
+				session.Command("go", "fmt", dst).Run()
 			}
 		}
 	}
@@ -212,30 +211,25 @@ func renderString(tmplstr string, v interface{}) (out string, err error) {
 
 func renderFile(dst string, src string, v interface{}) (err error) {
 	fmt.Println(src)
-	t, err := template.ParseFiles(src)
+	xxxx := regexp.MustCompile(`[^\n]*XXXX[^\n]*\n`)
+	nnnn := regexp.MustCompile(`.*NNNN`)
+	s, err := ioutil.ReadFile(src)
+	if err != nil {
+		return
+	}
+	out := xxxx.ReplaceAll(s, []byte(""))
+	out = nnnn.ReplaceAll(out, []byte(""))
+
+	t, err := template.New("rdfile").Funcs(funcMap).Parse(string(out))
 	if err != nil {
 		log.Fatal(err)
 	}
 	buf := bytes.NewBuffer(nil)
-	err = t.Funcs(funcMap).Execute(buf, v)
+	err = t.Execute(buf, v)
 	if err != nil {
 		return
 	}
-	xxxx := regexp.MustCompile(`.*\s+XXXX.*\n`)
 	fi, _ := os.Stat(src)
-	out := xxxx.ReplaceAll(buf.Bytes(), []byte(""))
-	err = ioutil.WriteFile(dst, out, fi.Mode())
-	return
-}
-
-func deleteXXXX(filename string) (err error) {
-	xxxx := regexp.MustCompile(`.*\s+XXXX.*\n`)
-	content, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return
-	}
-	fi, _ := os.Stat(filename)
-	out := xxxx.ReplaceAll(content, []byte(""))
-	err = ioutil.WriteFile(filename, out, fi.Mode())
+	err = ioutil.WriteFile(dst, buf.Bytes(), fi.Mode())
 	return
 }
