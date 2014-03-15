@@ -115,7 +115,10 @@ func main() {
 		cols = append(cols, c)
 	}
 	vs["Cols"] = cols
-	vs["PWD"], _ = os.Getwd()
+	pwd, _ := os.Getwd()
+	vs["PWD"] = pwd
+	vs["PkgPath"] = pwd[len(os.Getenv("GOPATH")+"/src/"):]
+	vs["AppName"] = filepath.Base(pwd)
 
 	// render template
 	tmpdir, err := ioutil.TempDir("./", "tmp.gails.")
@@ -155,9 +158,12 @@ func main() {
 		orig := src[len(tmpdir)+1:]
 		dst := newName(orig)
 		if _, exists := fileExists(dst); !exists {
+			dstDir := filepath.Dir(dst)
+			os.MkdirAll(dstDir, 0755)
 			fmt.Println("git://"+orig, "-->", dst)
 			if err = renderFile(dst, src, vs); err != nil {
-				sh.Command("cp", "-v", src, dst)
+				fmt.Println(err)
+				sh.Command("cp", "-v", src, dst).Run()
 			}
 			// format code
 			if strings.HasSuffix(dst, ".go") {
@@ -205,12 +211,21 @@ func renderString(tmplstr string, v interface{}) (out string, err error) {
 }
 
 func renderFile(dst string, src string, v interface{}) (err error) {
-	mytmpl := template.New("rdfile").Funcs(funcMap)
-	t, err := mytmpl.ParseFiles(src)
+	fmt.Println(src)
+	t, err := template.ParseFiles(src)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return t.Execute(os.Stdout, v)
+	buf := bytes.NewBuffer(nil)
+	err = t.Funcs(funcMap).Execute(buf, v)
+	if err != nil {
+		return
+	}
+	xxxx := regexp.MustCompile(`.*\s+XXXX.*\n`)
+	fi, _ := os.Stat(src)
+	out := xxxx.ReplaceAll(buf.Bytes(), []byte(""))
+	err = ioutil.WriteFile(dst, out, fi.Mode())
+	return
 }
 
 func deleteXXXX(filename string) (err error) {
