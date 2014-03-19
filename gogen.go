@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
-	"launchpad.net/goyaml"
+	"github.com/shxsun/goyaml"
 
 	"github.com/shxsun/flags"
 	"github.com/shxsun/go-sh"
@@ -21,13 +21,14 @@ import (
 type Option struct {
 	Template string `short:"t" long:"template" default:"shxsun/gails-default" description:"use which template(templale should on github)"`
 	Path     string `short:"p" long:"path" default:"." description:"code generate path"`
+	Depth    int    `short:"d" long:"depth" default:"4" description:"code depth to copy"`
 }
 
 var (
 	mycnf   = &Option{}
 	args    []string
 	funcMap template.FuncMap
-	gyml    *GailsYaml
+	gyml    *GenYaml
 )
 
 /*
@@ -81,46 +82,67 @@ func pathWalk(path string, depth int) (files []string, err error) {
 	return
 }
 
-func init() {
+var Usage = `Usage:
+	gogen repo [table] [col:type, col:type ...]
+
+example:
+	gogen rest book name:string
+	gogen bootstrap
+
+	// chone from spec git repo
+	gogen github.com/gogenerate/rest book name:string
+`
+
+// modify global args[] and mycnf
+func argParse() (vs map[string]interface{}) {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
 	var err error
-	args, err = flags.Parse(mycnf)
-	if len(args) < 2 {
-		program := filepath.Base(os.Args[0])
-		fmt.Printf(`Usage:
-	%s <table> <col:type> [col:type ...]
-Example:
-	%s book name:string
-`, program, program)
+	if args, err = flags.Parse(mycnf); err != nil {
 		os.Exit(1)
 	}
-	if err != nil {
+	if len(args) < 1 {
+		fmt.Println(Usage)
 		os.Exit(1)
 	}
-}
+	repo := args[0]
+	switch {
+	case regexp.MustCompile(`^[\w-]+$`).MatchString(repo):
+		repo = "github.com/gogenerate/" + repo
+	case regexp.MustCompile(`^[\w-]+/[\w-]+$`).MatchString(repo):
+		repo = "github.com/" + repo
+	}
+	mycnf.Template = repo
 
-func main() {
-	// prepare arguments
+	args = args[1:]
+	// table argument parse
 	patten := regexp.MustCompile(`^(\w+):(string|int)$`)
-	vs := make(map[string]interface{}, 0)
+	vs = make(map[string]interface{}, 0)
 	cols := make([]Column, 0)
-	vs["Table"] = args[0]
-	for _, s := range args[1:] {
-		vs := patten.FindStringSubmatch(s)
-		if vs == nil {
-			log.Fatalf("invalid format: %s", strconv.Quote(s))
+	if len(args) > 0 {
+		vs["Table"] = args[0]
+		for _, s := range args[1:] {
+			vs := patten.FindStringSubmatch(s)
+			if vs == nil {
+				log.Fatalf("invalid format: %s", strconv.Quote(s))
+			}
+			c := Column{}
+			c.ORMName, c.Type = vs[1], vs[2]
+			c.Name = strings.Title(c.ORMName)
+			cols = append(cols, c)
 		}
-		c := Column{}
-		c.ORMName, c.Type = vs[1], vs[2]
-		c.Name = strings.Title(c.ORMName)
-		cols = append(cols, c)
+		vs["Cols"] = cols
 	}
-	vs["Cols"] = cols
 	cwd, _ := os.Getwd()
 	tgtwd := filepath.Clean(filepath.Join(cwd, mycnf.Path))
 	vs["PWD"] = filepath.Clean(filepath.Join(tgtwd, mycnf.Path))
 	vs["PkgPath"] = tgtwd[len(os.Getenv("GOPATH")+"/src/"):]
 	vs["AppName"] = filepath.Base(tgtwd)
+	return
+}
+
+func main() {
+	// prepare arguments
+	vs := argParse()
 
 	// render template
 	tmpdir, err := ioutil.TempDir("./", "tmp.gails.")
@@ -129,10 +151,9 @@ func main() {
 	}
 	defer os.RemoveAll(tmpdir)
 	log.Println("use template", mycnf.Template)
-	sh.Command("git", "clone", "https://github.com/"+mycnf.Template, tmpdir).Run()
-	//sh.Command("git", "clone", "/Users/skyblue/goproj/src/github.com/shxsun/gails-default", tmpdir).Run()
+	sh.Command("git", "clone", "https://"+mycnf.Template, tmpdir).Run()
 
-	files, err := pathWalk(tmpdir, 1)
+	files, err := pathWalk(tmpdir, mycnf.Depth)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -162,7 +183,7 @@ func main() {
 			fmt.Println("git://"+orig, "-->", dst)
 			if err = renderFile(dst, src, vs); err != nil {
 				log.Println(err)
-				sh.Command("cp", "-v", src, dst).Run()
+				return
 			}
 			// format code
 			if strings.HasSuffix(dst, ".go") {
@@ -184,15 +205,16 @@ func fileExists(file string) (os.FileInfo, bool) {
 	return fi, err == nil
 }
 
-type GailsYaml struct {
+type GenYaml struct {
 	FileRename   map[string]string `yaml:"file-rename"`
 	StringRename map[string]string `yaml:"string-rename"`
 	Notice       string            `yaml:"notice"`
 }
 
-func readGailsYml(file string) (gyml *GailsYaml) {
+func readGailsYml(file string) (gyml *GenYaml) {
 	var err error
 	defer func() {
+		gyml = new(GenYaml)
 		if err != nil {
 			gyml.FileRename = make(map[string]string)
 			gyml.StringRename = make(map[string]string)
@@ -202,7 +224,6 @@ func readGailsYml(file string) (gyml *GailsYaml) {
 	if err != nil {
 		return
 	}
-	gyml = new(GailsYaml)
 	err = goyaml.Unmarshal(data, gyml)
 	return
 }
@@ -218,7 +239,12 @@ func renderString(tmplstr string, v interface{}) (out string, err error) {
 	return string(buf.Bytes()), err
 }
 
+// TODO, change remove prefix
 func renderFile(dst string, src string, v interface{}) (err error) {
+	trimLeft, trimRight := "<<X", "X>>"
+	_ = trimLeft
+	_ = trimRight
+
 	xxxx := regexp.MustCompile(`[^\n]*XXXX[^\n]*\n`)
 	nnnn := regexp.MustCompile(`.*NNNN`)
 	s, err := ioutil.ReadFile(src)
@@ -230,7 +256,7 @@ func renderFile(dst string, src string, v interface{}) (err error) {
 
 	t, err := template.New("rdfile").Funcs(funcMap).Parse(string(out))
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	buf := bytes.NewBuffer(nil)
 	err = t.Execute(buf, v)
@@ -242,7 +268,7 @@ func renderFile(dst string, src string, v interface{}) (err error) {
 	for key, val := range gyml.StringRename {
 		nkey, err := renderString(val, v)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		out = bytes.Replace(out, []byte(key), []byte(nkey), -1)
 	}
